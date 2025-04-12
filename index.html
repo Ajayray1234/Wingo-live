@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Big-Small Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px; text-align: center; }
+    .container { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); max-width: 600px; margin: auto; }
+    input, button { padding: 10px; margin: 5px; border-radius: 5px; border: 1px solid #ccc; }
+    button { background-color: #007bff; color: white; cursor: pointer; }
+    button:hover { background-color: #0056b3; }
+    table { width: 100%; margin-top: 20px; border-collapse: collapse; }
+    th, td { border: 1px solid #ccc; padding: 6px; font-size: 14px; }
+    th { background-color: #f0f0f0; }
+    .correct { background-color: #c6f6c6; }
+    .wrong { background-color: #f6c6c6; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Ajay wingo lotter prediction</h1>
+    <input type="text" id="historicalInput" placeholder="Enter historical numbers..." />
+    <button onclick="initializeTracker()">Start</button>
+    <div id="inputSection" style="display:none;">
+      <input type="text" id="newNumber" placeholder="Enter number 0-9" />
+      <button onclick="addNewNumber()">Submit</button>
+      <button onclick="resetAll()">Reset</button>
+      <button onclick="exportCSV()">Export CSV</button>
+      <p id="history"></p>
+      <p id="pattern"></p>
+      <p id="prediction"></p>
+      <p id="accuracy"></p>
+      <canvas id="accuracyChart" width="400" height="150"></canvas>
+      <table id="historyTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Input</th>
+            <th>Actual</th>
+            <th>Prediction</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let tracker;
+    let chart;
+    let accuracyData = [];
+
+    class BigSmallTracker {
+      constructor(historicalData) {
+        this.historicalData = historicalData.split('').map(Number);
+        this.currentSequence = [];
+        this.totalPredictions = 0;
+        this.correctPredictions = 0;
+        this.lastPredictionCorrect = true;
+        this.csvRows = [['#','Input','Actual','Prediction','Status']];
+      }
+
+      getBigSmall(number) {
+        return number <= 4 ? "Small" : "Big";
+      }
+
+      getPattern(sequence) {
+        return sequence.map(n => this.getBigSmall(n));
+      }
+
+      getMostFrequent(arr) {
+        const freq = {};
+        arr.forEach(val => freq[val] = (freq[val] || 0) + 1);
+        return Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
+      }
+
+      findAdvancedPrediction() {
+        const len = this.currentSequence.length;
+        if (len === 0) return [null, null];
+        const patternFlow = {};
+        const currentPattern = this.getPattern(this.currentSequence).join('');
+        const historicalPattern = this.getPattern(this.historicalData);
+
+        for (let i = 0; i <= historicalPattern.length - len; i++) {
+          const pattern = historicalPattern.slice(i, i + len).join('');
+          const next = this.historicalData[i + len];
+          if (next !== undefined) {
+            if (!patternFlow[pattern]) patternFlow[pattern] = [];
+            patternFlow[pattern].push(next);
+          }
+        }
+
+        if (patternFlow[currentPattern]) {
+          const most = this.getMostFrequent(patternFlow[currentPattern]);
+          return [most, this.getBigSmall(most)];
+        }
+
+        // smart fallback: skip 1st, use recent pattern
+        if (!this.lastPredictionCorrect && len > 1) {
+          const altSeq = this.currentSequence.slice(1);
+          const altPattern = this.getPattern(altSeq).join('');
+          if (patternFlow[altPattern]) {
+            const most = this.getMostFrequent(patternFlow[altPattern]);
+            return [most, this.getBigSmall(most)];
+          }
+        }
+
+        return [null, null];
+      }
+
+      addNumber(number) {
+        const [predictedNum, predictedBigSmall] = this.findAdvancedPrediction();
+        this.currentSequence.push(number);
+        const actual = this.getBigSmall(number);
+        const currentHistory = this.getPattern(this.currentSequence);
+        document.getElementById("history").innerText = "Current history: " + this.currentSequence.join('');
+        document.getElementById("pattern").innerText = "Pattern: " + currentHistory.join(', ');
+
+        let correct = false;
+        if (predictedNum !== null) {
+          document.getElementById("prediction").innerText = `🔸 Next Result: ${predictedNum} → ${predictedBigSmall}`;
+          this.totalPredictions++;
+          correct = predictedBigSmall === actual;
+          if (correct) this.correctPredictions++;
+          this.lastPredictionCorrect = correct;
+          this.updateTable(number, actual, predictedBigSmall, correct);
+          this.updateAccuracy();
+        }
+      }
+
+      updateTable(input, actual, predicted, correct) {
+        const row = document.createElement("tr");
+        row.className = correct ? "correct" : "wrong";
+        const index = this.totalPredictions;
+        row.innerHTML = `
+          <td>${index}</td>
+          <td>${input}</td>
+          <td>${actual}</td>
+          <td>${predicted}</td>
+          <td>${correct ? "✔" : "✘"}</td>
+        `;
+        document.querySelector("#historyTable tbody").appendChild(row);
+        this.csvRows.push([index, input, actual, predicted, correct ? "✔" : "✘"]);
+      }
+
+      updateAccuracy() {
+        const acc = Math.round((this.correctPredictions / this.totalPredictions) * 100 || 0);
+        document.getElementById("accuracy").innerText = `✅ Accuracy: ${this.correctPredictions} / ${this.totalPredictions} (${acc}%)`;
+        accuracyData.push(acc);
+        updateChart();
+      }
+
+      exportCSVData() {
+        const csv = this.csvRows.map(r => r.join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "prediction_history.csv";
+        a.click();
+      }
+    }
+
+    function initializeTracker() {
+      const data = document.getElementById("historicalInput").value.trim();
+      if (!/^[0-9]+$/.test(data)) {
+        alert("❌ Invalid historical data! Only digits 0-9 allowed.");
+        return;
+      }
+      tracker = new BigSmallTracker(data);
+      document.getElementById("inputSection").style.display = "block";
+      setupChart();
+    }
+
+    function addNewNumber() {
+      const input = document.getElementById("newNumber").value.trim();
+      if (!/^[0-9]$/.test(input)) {
+        alert("❌ Enter a valid number (0-9).");
+        return;
+      }
+      tracker.addNumber(Number(input));
+      document.getElementById("newNumber").value = '';
+    }
+
+    function resetAll() {
+      location.reload();
+    }
+
+    function exportCSV() {
+      if (tracker) tracker.exportCSVData();
+    }
+
+    function setupChart() {
+      const ctx = document.getElementById("accuracyChart").getContext("2d");
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label: 'Accuracy %',
+            data: [],
+            borderColor: 'green',
+            fill: false
+          }]
+        },
+        options: {
+          scales: {
+            y: { beginAtZero: true, max: 100 }
+          }
+        }
+      });
+    }
+
+    function updateChart() {
+      chart.data.labels.push(accuracyData.length);
+      chart.data.datasets[0].data.push(accuracyData[accuracyData.length - 1]);
+      chart.update();
+    }
+  </script>
+</body>
+</html>
